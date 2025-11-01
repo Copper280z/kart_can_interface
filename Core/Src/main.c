@@ -23,41 +23,72 @@
 #include "fdcan.h"
 #include "gpio.h"
 #include "i2c.h"
-// #include "memorymap.h"
 #include "spi.h"
+#include "sst.h"
+#include "stm32h7xx_hal.h"
+#include "stm32h7xx_hal_gpio.h"
 #include "usb_otg.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "analog_sensors.h"
 #include "can.h"
 #include "can_defs.h"
+#include "fifo.h"
+#include "inttypes.h"
+#include "scheduler.h"
 #include "stm32h7xx_hal_i2c.h"
 #include "tusb.h"
 #include "usb_descriptors.c"
+#include "usb_task.h"
+#include "usbd.h"
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 
+void set_leds(int red, int green, int blue) {
+  if (blue >= 0)
+    HAL_GPIO_WritePin(blue_led_GPIO_Port, blue_led_Pin, !blue);
+  if (green >= 0)
+    HAL_GPIO_WritePin(green_led_GPIO_Port, green_led_Pin, !green);
+  if (red >= 0)
+    HAL_GPIO_WritePin(red_led_GPIO_Port, red_led_Pin, !red);
+}
+int __io_putchar(int ch) {
+  if (tud_cdc_connected())
+    fifo_push(&usb_fifo, ch); // defined in usb_taks.h
+  return ch;
+}
+
+void usb_fifo_error_callback() {
+  set_leds(true, -1, -1); //
+}
+
 /* USER CODE END PTD */
 
-/* Private define ------------------------------------------------------------*/
+/* Private define
+ * ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
 /* USER CODE END PD */
 
-/* Private macro -------------------------------------------------------------*/
+/* Private macro
+ * -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
 
 /* USER CODE END PM */
 
-/* Private variables ---------------------------------------------------------*/
+/* Private variables
+ * ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
 
 /* USER CODE END PV */
 
-/* Private function prototypes -----------------------------------------------*/
+/* Private function prototypes
+ * -----------------------------------------------*/
 void SystemClock_Config(void);
 void PeriphCommonClock_Config(void);
 static void MPU_Config(void);
@@ -68,7 +99,8 @@ uint16_t pixel_buffer[64] = {0};
 
 /* USER CODE END PFP */
 
-/* Private user code ---------------------------------------------------------*/
+/* Private user code
+ * ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 void Enable_USB_IRQs() {
   HAL_NVIC_SetPriority(OTG_FS_EP1_OUT_IRQn, 0, 0);
@@ -88,11 +120,8 @@ void HAL_I2C_MasterRxCpltCallback(I2C_HandleTypeDef *hi2c) {
     pixel_buffer[i] = recast / 4; // TODO: div by 4 is the conversion factor,
                                   // but it truncates decimals and isn't signed
   }
-  uint8_t msg[256] = {0};
-  snprintf((char *)msg, 256, "pixels: %d, %d, %d, %d\r\n", pixel_buffer[0],
-           pixel_buffer[1], pixel_buffer[2], pixel_buffer[3]);
-  tud_cdc_n_write_str(0, (char *)msg);
-  tud_cdc_n_write_flush(0);
+  // printf("pixels: %d, %d, %d, %d\r\n", pixel_buffer[0], pixel_buffer[1],
+  //        pixel_buffer[2], pixel_buffer[3]);
 }
 
 // ***********************************************************************
@@ -106,6 +135,27 @@ void OTG_FS_IRQHandler(void) {
 }
 void OTG_FS_EP1_OUT_IRQHandler(void) {};
 void OTG_FS_EP1_IN_IRQHandler(void) {};
+
+void scan_i2c_bus() {
+  uint8_t possible_dev_addr[] = {
+      0x68,
+      0x69,
+  };
+  const uint8_t timeout = 10;
+  for (int i = 0; i < 2; i++) {
+    uint8_t dev_addr = possible_dev_addr[i];
+    HAL_StatusTypeDef status =
+        HAL_I2C_Master_Transmit(&hi2c1, dev_addr << 1, NULL, 0, timeout);
+
+    if (status == HAL_OK) {
+      // Device is present and ACKed.
+      printf("i2c device present at: 0x%x\r\n", dev_addr);
+    } else {
+      // Device is not present or NACKed.
+      printf("i2c device NOT present at: 0x%x\r\n", dev_addr);
+    }
+  }
+}
 
 INIT_AnalogMsg(can_msg);
 
@@ -121,7 +171,8 @@ int main(void) {
 
   /* USER CODE END 1 */
 
-  /* MPU Configuration--------------------------------------------------------*/
+  /* MPU
+   * Configuration--------------------------------------------------------*/
   MPU_Config();
 
   /* Enable the CPU Cache */
@@ -132,9 +183,11 @@ int main(void) {
   /* Enable D-Cache---------------------------------------------------------*/
   SCB_EnableDCache();
 
-  /* MCU Configuration--------------------------------------------------------*/
+  /* MCU
+   * Configuration--------------------------------------------------------*/
 
-  /* Reset of all peripherals, Initializes the Flash interface and the Systick.
+  /* Reset of all peripherals, Initializes the Flash interface and the
+   * Systick.
    */
   HAL_Init();
 
@@ -166,33 +219,48 @@ int main(void) {
   tusb_rhport_init_t dev_init = {.role = TUSB_ROLE_DEVICE,
                                  .speed = TUSB_SPEED_AUTO};
   tusb_init(0, &dev_init);
+  set_leds(false, false, false);
 
   config_can();
+  usb_task_instantiate(usb_fifo_error_callback);
+  static SST_Evt const *usbQSto[10];   /* Event queue storage */
+  SST_Task_start(AO_usb,               /* AO pointer to start */
+                 1U,                   /* SST-priority */
+                 usbQSto,              /* storage for the AO's queue */
+                 ARRAY_NELEM(usbQSto), /* queue length */
+                 (void *)0);           /* initialization event (not used) */
+  analog_task_instantiate(
+      usb_fifo_error_callback); // TODO: error callback currently unused
 
-  HAL_GPIO_WritePin(blue_led_GPIO_Port, blue_led_Pin, true);
-  HAL_GPIO_WritePin(green_led_GPIO_Port, green_led_Pin, true);
-  HAL_GPIO_WritePin(red_led_GPIO_Port, red_led_Pin, true);
+  static SST_Evt const *analogQSto[10];   /* Event queue storage */
+  SST_Task_start(AO_analog,               /* AO pointer to start */
+                 1U,                      /* SST-priority */
+                 analogQSto,              /* storage for the AO's queue */
+                 ARRAY_NELEM(analogQSto), /* queue length */
+                 (void *)0);              /* initialization event (not used) */
+  SST_start();
+  SST_onStart(); /* application callback to config & start interrupts */
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1) {
-    tud_cdc_n_write_str(0, "Hello World!\r\n");
-    tud_cdc_n_write_flush(0);
-    tud_task();
+    printf("\r\n");
+    for (uint16_t i = 0; i < 768; i++) {
+      printf("%d ", i);
+    }
+    printf("\r\n");
 
-    can_tx_msg(&can_msg);
-    can_msg.data.analog.rear_brake_pressure += 1;
-    can_msg.data.analog.throttle_position -= 1;
-    // msg[7] += 1;
-    uint8_t buffer[1] = {0x80};
-    HAL_I2C_Master_Transmit(&hi2c1, 0x69 << 1, buffer, 1, 1000);
-    HAL_I2C_Master_Receive_IT(&hi2c1, 0x69 << 1, raw_pix_buffer, 128);
+    // uint8_t buffer[1] = {0x80};
+    // HAL_I2C_Master_Transmit(&hi2c1, 0x69 << 1, buffer, 1, 1000);
+    // HAL_I2C_Master_Receive_IT(&hi2c1, 0x69 << 1, raw_pix_buffer, 128);
 
     HAL_GPIO_TogglePin(green_led_GPIO_Port, green_led_Pin);
-    board_delay(10);
+    // board_delay(10);
+    HAL_Delay(10);
     HAL_GPIO_TogglePin(green_led_GPIO_Port, green_led_Pin);
-    board_delay(990);
+    // board_delay(990);
+    HAL_Delay(990);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -222,10 +290,8 @@ void SystemClock_Config(void) {
   /** Initializes the RCC Oscillators according to the specified parameters
    * in the RCC_OscInitTypeDef structure.
    */
-  RCC_OscInitStruct.OscillatorType =
-      RCC_OSCILLATORTYPE_HSI48 | RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
-  RCC_OscInitStruct.HSI48State = RCC_HSI48_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
   RCC_OscInitStruct.PLL.PLLM = 2;
@@ -325,12 +391,17 @@ void MPU_Config(void) {
  */
 void Error_Handler(void) {
   /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
+  /* User can add his own implementation to report the HAL error return state
+   */
   __disable_irq();
+  HAL_GPIO_WritePin(blue_led_GPIO_Port, blue_led_Pin, true);
+  HAL_GPIO_WritePin(green_led_GPIO_Port, green_led_Pin, true);
+  HAL_GPIO_WritePin(red_led_GPIO_Port, red_led_Pin, true);
   while (1) {
-    HAL_GPIO_WritePin(blue_led_GPIO_Port, blue_led_Pin, true);
-    HAL_GPIO_WritePin(green_led_GPIO_Port, green_led_Pin, true);
-    HAL_GPIO_WritePin(red_led_GPIO_Port, red_led_Pin, false);
+    HAL_GPIO_TogglePin(blue_led_GPIO_Port, blue_led_Pin);
+    HAL_GPIO_TogglePin(green_led_GPIO_Port, green_led_Pin);
+    HAL_GPIO_TogglePin(red_led_GPIO_Port, red_led_Pin);
+    HAL_Delay(100);
   }
   /* USER CODE END Error_Handler_Debug */
 }

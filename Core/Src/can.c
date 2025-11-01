@@ -50,6 +50,13 @@ void can_tx_msg(CanMsg *msg) {
   TxHeader.Identifier = msg->id;
   if (HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TxHeader, TxData) != HAL_OK) {
     /* Transmission request Error */
-    Error_Handler();
+    switch (hfdcan1.ErrorCode) {
+    case HAL_FDCAN_ERROR_FIFO_FULL: {
+      HAL_GPIO_WritePin(red_led_GPIO_Port, red_led_Pin, 0);
+      break;
+    }
+    default:
+      Error_Handler();
+    }
   }
 }

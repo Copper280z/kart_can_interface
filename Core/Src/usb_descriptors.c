@@ -43,17 +43,14 @@ uint32_t board_millis() { return HAL_GetTick(); }
 //                     state ? LED_STATE_ON : (1 - LED_STATE_ON));
 // }
 
+extern void usb_transmit();
+
 static inline void board_delay(uint32_t ms) {
   uint32_t start_ms = board_millis();
   while (board_millis() - start_ms < ms) {
-// take chance to run usb background
-#if CFG_TUD_ENABLED
+    // take chance to run usb background
+    usb_transmit();
     tud_task();
-#endif
-
-#if CFG_TUH_ENABLED
-    tuh_task();
-#endif
   }
 }
 

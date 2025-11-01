@@ -22,7 +22,7 @@
 #include "main.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "tusb.h"
+#include "sst.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -173,7 +173,7 @@ void PendSV_Handler(void) {
  */
 void SysTick_Handler(void) {
   /* USER CODE BEGIN SysTick_IRQn 0 */
-
+  SST_TimeEvt_tick(); /* process all SST time events */
   /* USER CODE END SysTick_IRQn 0 */
   HAL_IncTick();
   /* USER CODE BEGIN SysTick_IRQn 1 */
