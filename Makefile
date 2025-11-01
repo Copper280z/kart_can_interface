@@ -38,6 +38,7 @@ BUILD_DIR = build
 C_SOURCES =  \
 Core/Src/usb_task.c \
 Core/Src/analog_sensors.c \
+Core/Src/tire_temps.c \
 Super-Simple-Tasker/sst_c/ports/arm-cm/sst_port.c \
 Super-Simple-Tasker/sst_c/src/sst.c \
 Core/Src/can.c \

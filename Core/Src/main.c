@@ -19,7 +19,6 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "adc.h"
-#include "cdc_device.h"
 #include "fdcan.h"
 #include "gpio.h"
 #include "i2c.h"
@@ -34,10 +33,12 @@
 #include "analog_sensors.h"
 #include "can.h"
 #include "can_defs.h"
+#include "cdc_device.h"
 #include "fifo.h"
 #include "inttypes.h"
 #include "scheduler.h"
 #include "stm32h7xx_hal_i2c.h"
+#include "tire_temps.h"
 #include "tusb.h"
 #include "usb_descriptors.c"
 #include "usb_task.h"
@@ -94,9 +95,6 @@ void PeriphCommonClock_Config(void);
 static void MPU_Config(void);
 /* USER CODE BEGIN PFP */
 
-uint8_t raw_pix_buffer[128] = {0};
-uint16_t pixel_buffer[64] = {0};
-
 /* USER CODE END PFP */
 
 /* Private user code
@@ -111,19 +109,6 @@ void Enable_USB_IRQs() {
   HAL_NVIC_EnableIRQ(OTG_FS_IRQn);
 }
 
-void HAL_I2C_MasterRxCpltCallback(I2C_HandleTypeDef *hi2c) {
-  for (int i = 0; i < 64; i++) {
-    uint8_t pos = i << 1;
-    uint16_t recast = ((uint16_t)raw_pix_buffer[pos + 1] << 8) |
-                      ((uint16_t)raw_pix_buffer[pos]);
-
-    pixel_buffer[i] = recast / 4; // TODO: div by 4 is the conversion factor,
-                                  // but it truncates decimals and isn't signed
-  }
-  // printf("pixels: %d, %d, %d, %d\r\n", pixel_buffer[0], pixel_buffer[1],
-  //        pixel_buffer[2], pixel_buffer[3]);
-}
-
 // ***********************************************************************
 // The HAL PCD IRQ Handler MUST NOT be called, or TinyUSB won't work
 // Regenerating sources WILL put it back in, so we don't have cubemx generate
@@ -136,11 +121,12 @@ void OTG_FS_IRQHandler(void) {
 void OTG_FS_EP1_OUT_IRQHandler(void) {};
 void OTG_FS_EP1_IN_IRQHandler(void) {};
 
-void scan_i2c_bus() {
+uint8_t scan_i2c_bus(uint8_t *sensor_addr, uint8_t *sensor_type) {
   uint8_t possible_dev_addr[] = {
       0x68,
       0x69,
   };
+  uint8_t num_sensors = 0;
   const uint8_t timeout = 10;
   for (int i = 0; i < 2; i++) {
     uint8_t dev_addr = possible_dev_addr[i];
@@ -150,11 +136,15 @@ void scan_i2c_bus() {
     if (status == HAL_OK) {
       // Device is present and ACKed.
       printf("i2c device present at: 0x%x\r\n", dev_addr);
+      sensor_addr[num_sensors] = dev_addr;
+      sensor_type[num_sensors] = 0;
+      num_sensors += 1;
     } else {
       // Device is not present or NACKed.
       printf("i2c device NOT present at: 0x%x\r\n", dev_addr);
     }
   }
+  return num_sensors;
 }
 
 INIT_AnalogMsg(can_msg);
@@ -222,6 +212,10 @@ int main(void) {
   set_leds(false, false, false);
 
   config_can();
+  uint8_t sensor_addr[4] = {0};
+  uint8_t sensor_type[4] = {0};
+  uint8_t num_sensors = scan_i2c_bus(sensor_addr, sensor_type);
+
   usb_task_instantiate(usb_fifo_error_callback);
   static SST_Evt const *usbQSto[10];   /* Event queue storage */
   SST_Task_start(AO_usb,               /* AO pointer to start */
@@ -229,6 +223,7 @@ int main(void) {
                  usbQSto,              /* storage for the AO's queue */
                  ARRAY_NELEM(usbQSto), /* queue length */
                  (void *)0);           /* initialization event (not used) */
+
   analog_task_instantiate(
       usb_fifo_error_callback); // TODO: error callback currently unused
 
@@ -238,6 +233,15 @@ int main(void) {
                  analogQSto,              /* storage for the AO's queue */
                  ARRAY_NELEM(analogQSto), /* queue length */
                  (void *)0);              /* initialization event (not used) */
+
+  tire_temps_task_instantiate(usb_fifo_error_callback, &hi2c1, num_sensors,
+                              sensor_addr, sensor_type);
+  static SST_Evt const *tireQSto[10];   /* Event queue storage */
+  SST_Task_start(AO_tires,              /* AO pointer to start */
+                 3U,                    /* SST-priority */
+                 tireQSto,              /* storage for the AO's queue */
+                 ARRAY_NELEM(tireQSto), /* queue length */
+                 (void *)0);            /* initialization event (not used) */
   SST_start();
   SST_onStart(); /* application callback to config & start interrupts */
   /* USER CODE END 2 */
@@ -250,10 +254,6 @@ int main(void) {
       printf("%d ", i);
     }
     printf("\r\n");
-
-    // uint8_t buffer[1] = {0x80};
-    // HAL_I2C_Master_Transmit(&hi2c1, 0x69 << 1, buffer, 1, 1000);
-    // HAL_I2C_Master_Receive_IT(&hi2c1, 0x69 << 1, raw_pix_buffer, 128);
 
     HAL_GPIO_TogglePin(green_led_GPIO_Port, green_led_Pin);
     // board_delay(10);

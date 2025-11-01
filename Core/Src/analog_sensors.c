@@ -10,7 +10,7 @@
 
 DBC_MODULE_NAME("Analog")
 
-INIT_AnalogMsg(msg);
+static INIT_AnalogMsg(msg);
 
 enum Analog_Signals {
   ANALOG_MESSAGE_SIG,
