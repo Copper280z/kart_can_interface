@@ -1,4 +1,5 @@
 #include "tire_temps.h"
+#include "amg8833.h"
 #include "can.h"
 #include "can_defs.h"
 #include "dbc_assert.h"
@@ -40,13 +41,13 @@ SST_Task *const AO_tires = &tire_inst.super; // task might be defined in
 static void Tire_ctor(Tire_Task *const me);
 static void Tire_init(Tire_Task *const me, SST_Evt const *const ie);
 static void Tire_dispatch(Tire_Task *const me, SST_Evt const *const e);
-void start_measurement(I2C_HandleTypeDef *hi2c, uint8_t addr, uint8_t type);
+void start_measurement(I2C_HandleTypeDef *hi2c, uint8_t addr, SensorType type);
 void DCMI_IRQHandler();
 
 void tire_temps_task_instantiate(void (*error_callback)(),
                                  I2C_HandleTypeDef *hi2c, uint8_t num_sensors,
                                  uint8_t sensor_addr[4],
-                                 uint8_t sensor_type[4]) {
+                                 SensorType sensor_type[4]) {
   assert(num_sensors < 5);
   tire_inst.num_sensors = num_sensors;
   tire_inst.hi2c = hi2c;
@@ -77,21 +78,12 @@ static void Tire_dispatch(Tire_Task *const me, SST_Evt const *const e) {
   }
 }
 
-void start_measurement(I2C_HandleTypeDef *hi2c, uint8_t addr, uint8_t type) {
+void start_measurement(I2C_HandleTypeDef *hi2c, uint8_t addr, SensorType type) {
   switch (type) {
   case 0: {
     // AMG8833
     printf("Start Tire Measurement: addr: 0x%x\r\n", addr);
-    uint8_t buffer[1] = {0x80};
-    HAL_StatusTypeDef status =
-        HAL_I2C_Master_Transmit(hi2c, addr << 1, buffer, 1, 1000);
-    if (status != HAL_OK) {
-      printf("Failed to start measure tires with error: %d\r\n", status);
-    }
-    status = HAL_I2C_Master_Receive_IT(hi2c, addr << 1, raw_pix_buffer, 128);
-    if (status != HAL_OK) {
-      printf("Failed to recv measure tires with error: %d\r\n", status);
-    }
+    amg8833_read_pixels(hi2c, addr, 0, 64, raw_pix_buffer);
     break;
   }
   case 1: {
