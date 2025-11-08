@@ -32,7 +32,7 @@ typedef struct {
   I2C_HandleTypeDef *hi2c;
   uint8_t num_sensors;
   uint8_t sensor_addr[4];
-  uint8_t sensor_type[4];
+  SensorType sensor_type[4];
 } Tire_Task;
 
 static Tire_Task tire_inst;

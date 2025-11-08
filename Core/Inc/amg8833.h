@@ -10,6 +10,8 @@
 // 0x68 or 0x69
 // may want to use i2c line buffer hardware
 // https://www.digikey.com/en/products/detail/texas-instruments/TCA9617BDGKR/5056065
+// may also want common mode choke on power rails.
+// https://www.digikey.com/en/products/detail/w%C3%BCrth-elektronik/744227S/1638886
 
 // blocking reads/writes
 int amg8833_init(I2C_HandleTypeDef *hi2c, uint8_t address);
