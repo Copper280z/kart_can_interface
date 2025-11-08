@@ -196,6 +196,10 @@ SECTIONS
     . = ALIGN(8);
   } >DTCMRAM
 
+  .d2_dma_buffers :
+  {
+    KEEP(*(.d2_dma_buffers)) /* Keep the section even if not explicitly referenced */
+  } > RAM_D2
 
 
   /* Remove information from the standard libraries */

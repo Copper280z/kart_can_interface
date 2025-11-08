@@ -19,14 +19,14 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "adc.h"
+#include "dma.h"
 #include "fdcan.h"
-#include "gpio.h"
 #include "i2c.h"
+#include "memorymap.h"
 #include "spi.h"
-#include "sst.h"
-#include "stm32h7xx_hal.h"
-#include "stm32h7xx_hal_gpio.h"
+#include "tim.h"
 #include "usb_otg.h"
+#include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -64,32 +64,30 @@ int __io_putchar(int ch) {
 }
 
 void usb_fifo_error_callback() {
+  // TODO: add some sort of logging so we know when/why this was triggered
   set_leds(true, -1, -1); //
 }
 
 /* USER CODE END PTD */
 
-/* Private define
- * ------------------------------------------------------------*/
+/* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
 /* USER CODE END PD */
 
-/* Private macro
- * -------------------------------------------------------------*/
+/* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-
+__attribute__((section(".d2_dma_buffers"))) volatile uint8_t adc_dma_buf[20] = {
+    0};
 /* USER CODE END PM */
 
-/* Private variables
- * ---------------------------------------------------------*/
+/* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
 
 /* USER CODE END PV */
 
-/* Private function prototypes
- * -----------------------------------------------*/
+/* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 void PeriphCommonClock_Config(void);
 static void MPU_Config(void);
@@ -97,8 +95,7 @@ static void MPU_Config(void);
 
 /* USER CODE END PFP */
 
-/* Private user code
- * ---------------------------------------------------------*/
+/* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 void Enable_USB_IRQs() {
   HAL_NVIC_SetPriority(OTG_FS_EP1_OUT_IRQn, 0, 0);
@@ -121,7 +118,7 @@ void OTG_FS_IRQHandler(void) {
 void OTG_FS_EP1_OUT_IRQHandler(void) {};
 void OTG_FS_EP1_IN_IRQHandler(void) {};
 
-uint8_t scan_i2c_bus(uint8_t *sensor_addr, uint8_t *sensor_type) {
+uint8_t scan_i2c_bus(uint8_t *sensor_addr, SensorType *sensor_type) {
   uint8_t possible_dev_addr[] = {
       0x68,
       0x69,
@@ -137,7 +134,7 @@ uint8_t scan_i2c_bus(uint8_t *sensor_addr, uint8_t *sensor_type) {
       // Device is present and ACKed.
       printf("i2c device present at: 0x%x\r\n", dev_addr);
       sensor_addr[num_sensors] = dev_addr;
-      sensor_type[num_sensors] = 0;
+      sensor_type[num_sensors] = AMG8833;
       num_sensors += 1;
     } else {
       // Device is not present or NACKed.
@@ -152,17 +149,17 @@ INIT_AnalogMsg(can_msg);
 /* USER CODE END 0 */
 
 /**
- * @brief  The application entry point.
- * @retval int
- */
-int main(void) {
+  * @brief  The application entry point.
+  * @retval int
+  */
+int main(void)
+{
 
   /* USER CODE BEGIN 1 */
 
   /* USER CODE END 1 */
 
-  /* MPU
-   * Configuration--------------------------------------------------------*/
+  /* MPU Configuration--------------------------------------------------------*/
   MPU_Config();
 
   /* Enable the CPU Cache */
@@ -173,12 +170,9 @@ int main(void) {
   /* Enable D-Cache---------------------------------------------------------*/
   SCB_EnableDCache();
 
-  /* MCU
-   * Configuration--------------------------------------------------------*/
+  /* MCU Configuration--------------------------------------------------------*/
 
-  /* Reset of all peripherals, Initializes the Flash interface and the
-   * Systick.
-   */
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
   HAL_Init();
 
   /* USER CODE BEGIN Init */
@@ -198,22 +192,34 @@ int main(void) {
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_ADC1_Init();
   MX_FDCAN1_Init();
   MX_I2C2_Init();
   MX_SPI2_Init();
   MX_USB_OTG_FS_PCD_Init();
   MX_I2C1_Init();
+  MX_TIM1_Init();
+  MX_TIM8_Init();
   /* USER CODE BEGIN 2 */
   Enable_USB_IRQs();
   tusb_rhport_init_t dev_init = {.role = TUSB_ROLE_DEVICE,
                                  .speed = TUSB_SPEED_AUTO};
   tusb_init(0, &dev_init);
+
+  HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adc_dma_buf, 2);
+  HAL_TIM_Base_Start(&htim8);
+
+  // TIM1 frequency input.
+  // Input capture mode latches CNT into CCRx when an edge is detected
+  // Truncate speed to zero below some threshold
+  HAL_TIM_IC_Start_IT(&htim1, TIM_CHANNEL_4);
+
   set_leds(false, false, false);
 
   config_can();
   uint8_t sensor_addr[4] = {0};
-  uint8_t sensor_type[4] = {0};
+  SensorType sensor_type[4] = {0};
   uint8_t num_sensors = scan_i2c_bus(sensor_addr, sensor_type);
 
   usb_task_instantiate(usb_fifo_error_callback);
@@ -249,17 +255,10 @@ int main(void) {
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1) {
-    printf("\r\n");
-    for (uint16_t i = 0; i < 768; i++) {
-      printf("%d ", i);
-    }
-    printf("\r\n");
 
     HAL_GPIO_TogglePin(green_led_GPIO_Port, green_led_Pin);
-    // board_delay(10);
     HAL_Delay(10);
     HAL_GPIO_TogglePin(green_led_GPIO_Port, green_led_Pin);
-    // board_delay(990);
     HAL_Delay(990);
     /* USER CODE END WHILE */
 
@@ -269,27 +268,27 @@ int main(void) {
 }
 
 /**
- * @brief System Clock Configuration
- * @retval None
- */
-void SystemClock_Config(void) {
+  * @brief System Clock Configuration
+  * @retval None
+  */
+void SystemClock_Config(void)
+{
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
   /** Supply configuration update enable
-   */
+  */
   HAL_PWREx_ConfigSupply(PWR_LDO_SUPPLY);
 
   /** Configure the main internal regulator output voltage
-   */
+  */
   __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE0);
 
-  while (!__HAL_PWR_GET_FLAG(PWR_FLAG_VOSRDY)) {
-  }
+  while(!__HAL_PWR_GET_FLAG(PWR_FLAG_VOSRDY)) {}
 
   /** Initializes the RCC Oscillators according to the specified parameters
-   * in the RCC_OscInitTypeDef structure.
-   */
+  * in the RCC_OscInitTypeDef structure.
+  */
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
@@ -302,15 +301,16 @@ void SystemClock_Config(void) {
   RCC_OscInitStruct.PLL.PLLRGE = RCC_PLL1VCIRANGE_2;
   RCC_OscInitStruct.PLL.PLLVCOSEL = RCC_PLL1VCOWIDE;
   RCC_OscInitStruct.PLL.PLLFRACN = 0;
-  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) {
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  {
     Error_Handler();
   }
 
   /** Initializes the CPU, AHB and APB buses clocks
-   */
-  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK |
-                                RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2 |
-                                RCC_CLOCKTYPE_D3PCLK1 | RCC_CLOCKTYPE_D1PCLK1;
+  */
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2
+                              |RCC_CLOCKTYPE_D3PCLK1|RCC_CLOCKTYPE_D1PCLK1;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.SYSCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_HCLK_DIV2;
@@ -319,26 +319,27 @@ void SystemClock_Config(void) {
   RCC_ClkInitStruct.APB2CLKDivider = RCC_APB2_DIV2;
   RCC_ClkInitStruct.APB4CLKDivider = RCC_APB4_DIV2;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK) {
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK)
+  {
     Error_Handler();
   }
 
   /** Enables the Clock Security System
-   */
+  */
   HAL_RCC_EnableCSS();
 }
 
 /**
- * @brief Peripherals Common Clock Configuration
- * @retval None
- */
-void PeriphCommonClock_Config(void) {
+  * @brief Peripherals Common Clock Configuration
+  * @retval None
+  */
+void PeriphCommonClock_Config(void)
+{
   RCC_PeriphCLKInitTypeDef PeriphClkInitStruct = {0};
 
   /** Initializes the peripherals clock
-   */
-  PeriphClkInitStruct.PeriphClockSelection =
-      RCC_PERIPHCLK_ADC | RCC_PERIPHCLK_SPI2;
+  */
+  PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_ADC|RCC_PERIPHCLK_SPI2;
   PeriphClkInitStruct.PLL2.PLL2M = 4;
   PeriphClkInitStruct.PLL2.PLL2N = 160;
   PeriphClkInitStruct.PLL2.PLL2P = 8;
@@ -349,7 +350,8 @@ void PeriphCommonClock_Config(void) {
   PeriphClkInitStruct.PLL2.PLL2FRACN = 0;
   PeriphClkInitStruct.Spi123ClockSelection = RCC_SPI123CLKSOURCE_PLL2;
   PeriphClkInitStruct.AdcClockSelection = RCC_ADCCLKSOURCE_PLL2;
-  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK) {
+  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
+  {
     Error_Handler();
   }
 }
@@ -358,16 +360,17 @@ void PeriphCommonClock_Config(void) {
 
 /* USER CODE END 4 */
 
-/* MPU Configuration */
+ /* MPU Configuration */
 
-void MPU_Config(void) {
+void MPU_Config(void)
+{
   MPU_Region_InitTypeDef MPU_InitStruct = {0};
 
   /* Disables the MPU */
   HAL_MPU_Disable();
 
   /** Initializes and configures the Region and the memory to be protected
-   */
+  */
   MPU_InitStruct.Enable = MPU_REGION_ENABLE;
   MPU_InitStruct.Number = MPU_REGION_NUMBER0;
   MPU_InitStruct.BaseAddress = 0x0;
@@ -381,15 +384,28 @@ void MPU_Config(void) {
   MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
 
   HAL_MPU_ConfigRegion(&MPU_InitStruct);
+
+  /** Initializes and configures the Region and the memory to be protected
+  */
+  MPU_InitStruct.Number = MPU_REGION_NUMBER1;
+  MPU_InitStruct.BaseAddress = 0x30000000;
+  MPU_InitStruct.Size = MPU_REGION_SIZE_4KB;
+  MPU_InitStruct.SubRegionDisable = 0x0;
+  MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
+  MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE;
+
+  HAL_MPU_ConfigRegion(&MPU_InitStruct);
   /* Enables the MPU */
   HAL_MPU_Enable(MPU_PRIVILEGED_DEFAULT);
+
 }
 
 /**
- * @brief  This function is executed in case of error occurrence.
- * @retval None
- */
-void Error_Handler(void) {
+  * @brief  This function is executed in case of error occurrence.
+  * @retval None
+  */
+void Error_Handler(void)
+{
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state
    */
@@ -406,15 +422,16 @@ void Error_Handler(void) {
   /* USER CODE END Error_Handler_Debug */
 }
 
-#ifdef USE_FULL_ASSERT
+#ifdef  USE_FULL_ASSERT
 /**
- * @brief  Reports the name of the source file and the source line number
- *         where the assert_param error has occurred.
- * @param  file: pointer to the source file name
- * @param  line: assert_param error line source number
- * @retval None
- */
-void assert_failed(uint8_t *file, uint32_t line) {
+  * @brief  Reports the name of the source file and the source line number
+  *         where the assert_param error has occurred.
+  * @param  file: pointer to the source file name
+  * @param  line: assert_param error line source number
+  * @retval None
+  */
+void assert_failed(uint8_t *file, uint32_t line)
+{
   /* USER CODE BEGIN 6 */
   /* User can add his own implementation to report the file name and line
      number,

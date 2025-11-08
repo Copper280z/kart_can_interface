@@ -46,6 +46,7 @@
      PA10   ------> USART1_RX
      PA13 (JTMS/SWDIO)   ------> DEBUG_JTMS-SWDIO
      PA14 (JTCK/SWCLK)   ------> DEBUG_JTCK-SWCLK
+     PB3 (JTDO/TRACESWO)   ------> DEBUG_JTDO-SWO
      PE0   ------> UART8_RX
      PE1   ------> UART8_TX
 */
@@ -108,8 +109,8 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Alternate = GPIO_AF7_UART7;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : M4_Pin M3_Pin M2_Pin M1_Pin */
-  GPIO_InitStruct.Pin = M4_Pin|M3_Pin|M2_Pin|M1_Pin;
+  /*Configure GPIO pins : M4_Pin M3_Pin M2_Pin */
+  GPIO_InitStruct.Pin = M4_Pin|M3_Pin|M2_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);

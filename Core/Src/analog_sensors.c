@@ -54,7 +54,7 @@ static void Analog_dispatch(Analog_Task *const me, SST_Evt const *const e) {
     msg.data.analog.rear_brake_pressure += 1;
     msg.data.analog.throttle_position += 1;
     can_tx_msg(&msg);
-    printf("Analog Msg!\r\n");
+    printf("Analog Msg!, TIM8->CNT: %d\r\n", TIM8->CNT);
     break;
   }
   case ANALOG_FILTER_SIG: {
