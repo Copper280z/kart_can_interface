@@ -27,12 +27,18 @@ typedef struct __attribute__((packed)) {
 } IMUData2;
 _Static_assert(sizeof(IMUData2) == 8, "IMUData2 defined incorrectly");
 
+typedef struct __attribute__((packed)) {
+  uint8_t temp[8];
+} TireData;
+_Static_assert(sizeof(TireData) == 8, "TireData defined incorrectly");
+
 typedef struct {
   const uint32_t id;
   union {
     AnalogData analog;
     IMUData1 imu1;
     IMUData2 imu2;
+    TireData tire;
     uint8_t def[8];
   } data;
 } CanMsg;
@@ -40,6 +46,10 @@ typedef struct {
 #define INIT_AnalogMsg(X) CanMsg X = {.id = 0x21, .data = {.def = {0}}}
 #define INIT_IMUMsg1(X) CanMsg X = {.id = 0x22, .data = {.def = {0}}}
 #define INIT_IMUMsg2(X) CanMsg X = {.id = 0x23, .data = {.def = {0}}}
+#define INIT_TireLF(X) CanMsg X = {.id = 0x24, .data = {.def = {0}}}
+#define INIT_TireRF(X) CanMsg X = {.id = 0x25, .data = {.def = {0}}}
+#define INIT_TireLR(X) CanMsg X = {.id = 0x26, .data = {.def = {0}}}
+#define INIT_TireRR(X) CanMsg X = {.id = 0x27, .data = {.def = {0}}}
 
 // typedef struct {
 //   const uint32_t id;
